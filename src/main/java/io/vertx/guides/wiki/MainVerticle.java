@@ -1,8 +1,9 @@
-package io.vertx.starter;
+package io.vertx.guides.wiki;
 
 import io.vertx.core.AbstractVerticle;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
+import io.vertx.core.Vertx;
 import io.vertx.core.http.HttpServer;
 import io.vertx.core.impl.logging.Logger;
 import io.vertx.core.impl.logging.LoggerFactory;
@@ -10,9 +11,12 @@ import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
 import io.vertx.ext.web.handler.BodyHandler;
+import io.vertx.ext.web.templ.freemarker.FreeMarkerTemplateEngine;
 import io.vertx.jdbcclient.JDBCPool;
 import io.vertx.sqlclient.Row;
 import io.vertx.sqlclient.RowSet;
+
+import java.util.ArrayList;
 
 public class MainVerticle extends AbstractVerticle {
 
@@ -24,19 +28,27 @@ public class MainVerticle extends AbstractVerticle {
   private static final String SQL_ALL_PAGES = "select Name from Pages";
   private static final String SQL_DELETE_PAGE = "delete from Pages where Id = ?";
   private JDBCPool pool;
+  private FreeMarkerTemplateEngine templateEngine;
 
   @Override
   public void start(Promise<Void> startPromise) {
     prepareDatabase()
       .compose(result -> startHttpServer())
-      .onSuccess(result -> startPromise.complete())
+      .onSuccess(result -> {
+        LOGGER.info("db and httpserver started");
+        startPromise.complete();
+      })
       .onFailure(error -> {
-        LOGGER.error("something went wrong", error);
+        LOGGER.error("something went wrong {}", error);
+        startPromise.fail(error);
       });
   }
 
   private Future<HttpServer> startHttpServer() {
     HttpServer httpServer = vertx.createHttpServer();
+
+    templateEngine = FreeMarkerTemplateEngine.create(vertx);
+
     Router router = Router.router(vertx);
     router.get("/").handler(this::indexHandler);
     router.get("/wiki/:page").handler(this::pageRenderingHandler);
@@ -44,7 +56,15 @@ public class MainVerticle extends AbstractVerticle {
     router.post("/save").handler(this::pageUpdateHandler);
     router.post("/create").handler(this::pageCreateHandler);
     router.post("/delete").handler(this::pageDeletionHandler);
-    return httpServer.requestHandler(router).listen(8080);
+
+    return httpServer.requestHandler(router)
+      .listen(8080)
+      .onSuccess(result -> {
+        LOGGER.info("HTTP server running on port 8080");
+      })
+      .onFailure(error -> {
+        LOGGER.error("something went wrong {}", error);
+      });
   }
 
   private void pageDeletionHandler(RoutingContext routingContext) {
@@ -64,7 +84,19 @@ public class MainVerticle extends AbstractVerticle {
   }
 
   private void indexHandler(RoutingContext routingContext) {
-    context.put("title", "Wiki home");
+    JsonObject templateData = new JsonObject()
+      .put("title", "Wiki home")
+      .put("pages", new ArrayList<String>());
+
+    templateEngine
+      .render(templateData, "templates/index.ftl")
+      .onSuccess(data -> {
+        routingContext.response().putHeader("Content-Type", "text/html");
+        routingContext.response().end(data.toString());  // <4>
+      })
+      .onFailure(error -> {
+        routingContext.fail(500, error);
+      });
   }
 
   private Future<RowSet<Row>> prepareDatabase() {
@@ -74,7 +106,18 @@ public class MainVerticle extends AbstractVerticle {
       .put("max_pool_size", 30));
 
     return pool.query(SQL_CREATE_PAGES_TABLE)
-      .execute();
+      .execute()
+      .onSuccess(result -> {
+        LOGGER.info("database has been initialized");
+      })
+      .onFailure(error -> {
+        LOGGER.info("something went wrong with the db step  {}", error);
+      });
+  }
+
+  public static void main(String[] args) {
+    Vertx vertx = Vertx.vertx();
+    vertx.deployVerticle(MainVerticle.class.getName());
   }
 
 
