@@ -7,16 +7,15 @@ import io.vertx.core.Vertx;
 import io.vertx.core.http.HttpServer;
 import io.vertx.core.impl.logging.Logger;
 import io.vertx.core.impl.logging.LoggerFactory;
+import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
-import io.vertx.ext.web.handler.BodyHandler;
 import io.vertx.ext.web.templ.freemarker.FreeMarkerTemplateEngine;
 import io.vertx.jdbcclient.JDBCPool;
 import io.vertx.sqlclient.Row;
+import io.vertx.sqlclient.RowIterator;
 import io.vertx.sqlclient.RowSet;
-
-import java.util.ArrayList;
 
 public class MainVerticle extends AbstractVerticle {
 
@@ -52,7 +51,6 @@ public class MainVerticle extends AbstractVerticle {
     Router router = Router.router(vertx);
     router.get("/").handler(this::indexHandler);
     router.get("/wiki/:page").handler(this::pageRenderingHandler);
-    router.post().handler(BodyHandler.create());
     router.post("/save").handler(this::pageUpdateHandler);
     router.post("/create").handler(this::pageCreateHandler);
     router.post("/delete").handler(this::pageDeletionHandler);
@@ -72,7 +70,15 @@ public class MainVerticle extends AbstractVerticle {
   }
 
   private void pageCreateHandler(RoutingContext routingContext) {
-
+    String pageName = routingContext.request().getParam("name");
+    String location;
+    if (pageName == null || pageName.isEmpty()) {
+      location = "/";
+    } else {
+      location = "/wiki/" + pageName;
+    }
+    LOGGER.info("retrieved name " + pageName + " and location" + location);
+    routingContext.response().setStatusCode(303).putHeader("Location", location).end();
   }
 
   private void pageUpdateHandler(RoutingContext routingContext) {
@@ -84,15 +90,26 @@ public class MainVerticle extends AbstractVerticle {
   }
 
   private void indexHandler(RoutingContext routingContext) {
-    JsonObject templateData = new JsonObject()
-      .put("title", "Wiki home")
-      .put("pages", new ArrayList<String>());
 
-    templateEngine
-      .render(templateData, "templates/index.ftl")
+    this.pool.query(SQL_ALL_PAGES)
+      .execute()
+      .compose(rowSet -> {
+        JsonObject templateData = new JsonObject().put("title", "Home of our Wiki!!!");
+        JsonArray pages = new JsonArray();
+        RowIterator<Row> rowIterator = rowSet.iterator();
+        while (rowIterator.hasNext()) {
+          pages.add(rowIterator.next().getString("Name"));
+        }
+        templateData.put("pages", pages);
+        return Future.succeededFuture(templateData);
+      })
+      .compose(templateData -> {
+        LOGGER.info("fetched template data " + templateData.toString());
+        return templateEngine.render(templateData, "templates/index.ftl");
+      })
       .onSuccess(data -> {
         routingContext.response().putHeader("Content-Type", "text/html");
-        routingContext.response().end(data.toString());  // <4>
+        routingContext.response().end(data.toString());
       })
       .onFailure(error -> {
         routingContext.fail(500, error);
