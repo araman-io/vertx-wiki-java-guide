@@ -1,7 +1,7 @@
-/*C6*/SET SCHEMA PUBLIC
-create table if not exists Pages (Id integer identity primary key, Name varchar(255) unique, Content clob)
 /*C5*/SET SCHEMA PUBLIC
-DISCONNECT
-/*C6*/DISCONNECT
-/*C7*/SET SCHEMA PUBLIC
-DISCONNECT
+create table if not exists Pages (Id integer identity primary key, Name varchar(255) unique, Content clob)
+DELETE FROM PAGES WHERE ID=1
+SET SCHEMA SYSTEM_LOBS
+DELETE FROM LOB_IDS WHERE LOB_ID=9
+INSERT INTO LOB_IDS VALUES(9,451,0,40)
+COMMIT

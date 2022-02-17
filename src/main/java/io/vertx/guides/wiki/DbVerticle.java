@@ -1,14 +1,20 @@
 package io.vertx.guides.wiki;
 
 import io.vertx.core.AbstractVerticle;
+import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import io.vertx.core.eventbus.Message;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.jdbcclient.JDBCPool;
 import io.vertx.sqlclient.Row;
+import io.vertx.sqlclient.RowIterator;
+import io.vertx.sqlclient.RowSet;
+import io.vertx.sqlclient.Tuple;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import java.util.Date;
 
 public class DbVerticle extends AbstractVerticle {
 
@@ -20,6 +26,7 @@ public class DbVerticle extends AbstractVerticle {
   private static final String SQL_SAVE_PAGE = "update Pages set Content = ? where Id = ?";
   private static final String SQL_ALL_PAGES = "select Name from Pages";
   private static final String SQL_DELETE_PAGE = "delete from Pages where Id = ?";
+  private static final String EMPTY_PAGE_MARKDOWN = "# A new page\n" + "\n" + "Feel-free to write in Markdown!\n";
 
 
   @Override
@@ -31,9 +38,9 @@ public class DbVerticle extends AbstractVerticle {
     pool.query(SQL_CREATE_PAGES_TABLE)
       .execute()
       .onSuccess(result -> {
+        LOGGER.info("database has been initialized");
         vertx.eventBus().consumer("wikidb.queue", this::onMessage);  // <3>
         startPromise.complete();
-        LOGGER.info("database has been initialized");
       })
       .onFailure(error -> {
         LOGGER.info("something went wrong with the db step  {}", error);
@@ -50,9 +57,83 @@ public class DbVerticle extends AbstractVerticle {
     switch (action) {
       case "all-pages":
         this.fetchAllPages(message);
-      default:
-        this.fetchAllPages(message);
+        break;
+      case "delete-page":
+        this.deletePage(message);
+        break;
+      case "upsert-page":
+        this.upsertPage(message);
+        break;
+      case "render-page":
+        this.renderPage(message);
+        break;
     }
+  }
+
+  private void upsertPage(Message<JsonObject> message) {
+    JsonObject request = message.body();
+    Boolean newPage = request.getBoolean("newPage");
+    Integer id = request.getInteger("id");
+    String pageName = request.getString("title");
+    String rawContent = request.getString("markDown");
+    Future<RowSet<Row>> query;
+
+    LOGGER.info("retrieved data to upsert {} {} {}", newPage, id, pageName);
+
+    if (newPage) {
+      query = this.pool.preparedQuery(SQL_CREATE_PAGE)
+        .execute(Tuple.of(pageName, rawContent));
+    } else {
+      query = this.pool.preparedQuery(SQL_SAVE_PAGE)
+        .execute(Tuple.of(rawContent, id));
+    }
+
+    query
+      .onSuccess(o -> {
+        message.reply(new JsonObject());
+      })
+      .onFailure(error -> {
+        message.fail(ErrorCodes.DB_ERROR.ordinal(), error.getMessage());
+      });
+  }
+
+  private void renderPage(Message<JsonObject> message) {
+    String pageName = message.body().getString("page");
+    this.pool.preparedQuery(SQL_GET_PAGE).execute(Tuple.of(pageName))
+      .onSuccess(rows -> {
+        JsonObject templateData = new JsonObject();
+        RowIterator<Row> iterator = rows.iterator();
+        if (iterator.hasNext()) {
+          Row row = iterator.next();
+          templateData.put("id", row.getInteger("ID"));
+          templateData.put("rawContent", row.getString("CONTENT"));
+          templateData.put("newPage", "no");
+        } else {
+          templateData.put("id", -1);
+          templateData.put("rawContent", EMPTY_PAGE_MARKDOWN);
+          templateData.put("newPage", "yes");
+        }
+        templateData.put("title", pageName);
+        templateData.put("timestamp", new Date().toString());
+
+        message.reply(templateData);
+      })
+      .onFailure(error -> {
+        message.fail(ErrorCodes.DB_ERROR.ordinal(), error.getMessage());
+      });
+  }
+
+  private void deletePage(Message<JsonObject> message) {
+    Integer id = message.body().getInteger("id");
+    this.pool
+      .preparedQuery(SQL_DELETE_PAGE)
+      .execute(Tuple.of(id))
+      .onSuccess(rows -> {
+        message.reply(new JsonObject());
+      })
+      .onFailure(error -> {
+        message.fail(ErrorCodes.DB_ERROR.ordinal(), error.getMessage());
+      });
   }
 
   private void fetchAllPages(Message<JsonObject> message) {
@@ -64,7 +145,9 @@ public class DbVerticle extends AbstractVerticle {
         for (Row r : rows) {
           pages.add(r.getString("NAME"));
         }
-        message.reply(new JsonObject().put("pages", pages));
+        JsonObject result = new JsonObject().put("pages", pages);
+        LOGGER.info("fetched following pages {} {}", pages.size());
+        message.reply(result);
       })
       .onFailure(error -> {
         message.fail(ErrorCodes.DB_ERROR.ordinal(), error.getMessage());
