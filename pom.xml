@@ -85,6 +85,10 @@
       <artifactId>vertx-codegen</artifactId>
       <classifier>processor</classifier>
     </dependency>
+    <dependency>
+      <groupId>io.vertx</groupId>
+      <artifactId>vertx-web-client</artifactId>
+    </dependency>
     <!-- end::db-deps[] -->
 
     <!-- tag::logger[] -->

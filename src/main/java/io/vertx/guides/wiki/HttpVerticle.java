@@ -3,11 +3,12 @@ package io.vertx.guides.wiki;
 import com.github.rjeschke.txtmark.Processor;
 import io.vertx.core.AbstractVerticle;
 import io.vertx.core.Promise;
-import io.vertx.core.eventbus.DeliveryOptions;
 import io.vertx.core.http.HttpServer;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
+import io.vertx.ext.web.client.WebClient;
+import io.vertx.ext.web.client.WebClientOptions;
 import io.vertx.ext.web.handler.BodyHandler;
 import io.vertx.ext.web.templ.freemarker.FreeMarkerTemplateEngine;
 import io.vertx.guides.wiki.database.WikiDbService;
@@ -21,11 +22,15 @@ public class HttpVerticle extends AbstractVerticle {
   private WikiDbService proxy;
   private FreeMarkerTemplateEngine templateEngine;
   private Logger LOGGER = LoggerFactory.getLogger(HttpVerticle.class);
+  private WebClient webClient;
 
   @Override
   public void start(Promise<Void> startPromise) throws Exception {
     HttpServer httpServer = vertx.createHttpServer();
     this.proxy = WikiDbService.createProxy(vertx, "wikidb.queue");
+    this.webClient = WebClient.create(vertx, new WebClientOptions()
+      .setSsl(true)
+      .setUserAgent("vert-x3"));
 
     templateEngine = FreeMarkerTemplateEngine.create(vertx);
 
@@ -36,6 +41,7 @@ public class HttpVerticle extends AbstractVerticle {
     router.post("/save").handler(this::pageUpdateHandler);
     router.post("/create").handler(this::pageCreateHandler);
     router.post("/delete").handler(this::pageDeletionHandler);
+    router.get("/backup").handler(this::backupHandler);
 
     httpServer.requestHandler(router)
       .listen(8080)
@@ -119,10 +125,9 @@ public class HttpVerticle extends AbstractVerticle {
     this.proxy
       .fetchAllPages()
       .compose(message -> {
-        JsonObject templateData = new JsonObject().put("title", "Home of our Wiki!!!");
-        templateData.put("pages", message.getJsonArray("pages").getList());
-        LOGGER.info("the templatedata {}", templateData);
-        return templateEngine.render(templateData, "templates/index.ftl");
+        routingContext.put("title", "Home of our Wiki!!!");
+        routingContext.put("pages", message.getJsonArray("pages").getList());
+        return templateEngine.render(routingContext.data(), "templates/index.ftl");
       })
       .onSuccess(data -> {
         routingContext.response().putHeader("Content-Type", "text/html");
@@ -132,4 +137,38 @@ public class HttpVerticle extends AbstractVerticle {
         routingContext.fail(500, error);
       });
   }
+
+  private void backupHandler(RoutingContext routingContext) {
+    this.proxy.getAllPageData()
+      .compose(pageData -> {
+        JsonObject pages = pageData.copy()
+          .put("language", "plaintext")
+          .put("title", "vertx-wiki-backup-ar")
+          .put("public", true);
+
+        return webClient.post(443, "glot.io", "/api/snippets") // <3>
+          .putHeader("Content-Type", "application/json")
+          .sendJsonObject(pages);
+      })
+      .onSuccess(response -> {
+        if (response.statusCode() == 200) {
+          String url = "https://glot.io/snippets/" + response.bodyAsJsonObject().getString("id");
+          LOGGER.info("backup url is {}", url);
+          routingContext.put("backup_gist_url", url);  // <6>
+          indexHandler(routingContext);
+        } else {
+          StringBuilder message = new StringBuilder().append("Could not backup the wiki: ").append(response.statusMessage());
+          JsonObject body = response.body().toJsonObject();
+          if (body != null) {
+            message.append(System.getProperty("line.separator")).append(body.encodePrettily());
+          }
+          LOGGER.error(message.toString());
+          routingContext.fail(502);
+        }
+      })
+      .onFailure(error -> {
+        routingContext.fail(500, error);
+      });
+  }
+
 }

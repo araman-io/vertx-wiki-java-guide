@@ -20,6 +20,8 @@ public interface WikiDbService {
 
   public Future<JsonObject> upsertPage(JsonObject message);
 
+  public Future<JsonObject> getAllPageData();
+
 
   static WikiDbService create(JDBCPool pool) {
     return new WikiDbServiceImpl(pool);

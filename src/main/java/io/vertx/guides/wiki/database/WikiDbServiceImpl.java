@@ -12,6 +12,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.Date;
+import java.util.Iterator;
 
 public class WikiDbServiceImpl implements WikiDbService {
 
@@ -24,6 +25,7 @@ public class WikiDbServiceImpl implements WikiDbService {
   private static final String SQL_ALL_PAGES = "select Name from Pages";
   private static final String SQL_DELETE_PAGE = "delete from Pages where Id = ?";
   private static final String EMPTY_PAGE_MARKDOWN = "# A new page\n" + "\n" + "Feel-free to write in Markdown!\n";
+  private static final String GET_ALL_DATA = "select Name, Content from Pages";
 
   public WikiDbServiceImpl(JDBCPool pool) {
     this.pool = pool;
@@ -107,6 +109,21 @@ public class WikiDbServiceImpl implements WikiDbService {
     return query
       .compose(o -> {
         return Future.succeededFuture(new JsonObject());
+      });
+  }
+
+  public Future<JsonObject> getAllPageData() {
+    return this.pool.query(GET_ALL_DATA)
+      .execute()
+      .compose(rows -> {
+        JsonArray pages = new JsonArray();
+        for (Row r : rows) {
+          JsonObject page = new JsonObject()
+            .put("name", r.getString("NAME"))
+            .put("content", r.getString("CONTENT"));
+          pages.add(page);
+        }
+        return Future.succeededFuture(new JsonObject().put("files", pages));
       });
   }
 
