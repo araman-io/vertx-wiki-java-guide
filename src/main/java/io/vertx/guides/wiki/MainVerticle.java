@@ -1,12 +1,12 @@
 package io.vertx.guides.wiki;
 
 import io.vertx.core.AbstractVerticle;
+import io.vertx.core.DeploymentOptions;
 import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
-import io.vertx.core.eventbus.DeliveryOptions;
-import io.vertx.core.impl.logging.Logger;
-import io.vertx.core.impl.logging.LoggerFactory;
-import io.vertx.core.json.JsonObject;
+import io.vertx.guides.wiki.database.DbVerticle;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class MainVerticle extends AbstractVerticle {
 
@@ -17,10 +17,11 @@ public class MainVerticle extends AbstractVerticle {
     vertx
       .deployVerticle(DbVerticle.class.getName())
       .compose(db -> {
-        return vertx.deployVerticle(HttpVerticle.class.getName());
+        LOGGER.info("now deploying http verticle instances started");
+        return vertx.deployVerticle(HttpVerticle.class.getName(), new DeploymentOptions().setInstances(2));
       })
       .onSuccess(result -> {
-        LOGGER.info("db and httpserver started");
+        LOGGER.info("db and 2 httpserver instances started");
         startPromise.complete();
       }).onFailure(error -> {
         LOGGER.error("something went wrong {}", error);

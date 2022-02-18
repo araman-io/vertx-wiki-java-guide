@@ -10,6 +10,7 @@ import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
 import io.vertx.ext.web.handler.BodyHandler;
 import io.vertx.ext.web.templ.freemarker.FreeMarkerTemplateEngine;
+import io.vertx.guides.wiki.database.WikiDbService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -17,12 +18,14 @@ import static java.lang.Integer.valueOf;
 
 public class HttpVerticle extends AbstractVerticle {
 
+  private WikiDbService proxy;
   private FreeMarkerTemplateEngine templateEngine;
   private Logger LOGGER = LoggerFactory.getLogger(HttpVerticle.class);
 
   @Override
   public void start(Promise<Void> startPromise) throws Exception {
     HttpServer httpServer = vertx.createHttpServer();
+    this.proxy = WikiDbService.createProxy(vertx, "wikidb.queue");
 
     templateEngine = FreeMarkerTemplateEngine.create(vertx);
 
@@ -48,12 +51,9 @@ public class HttpVerticle extends AbstractVerticle {
   private void pageDeletionHandler(RoutingContext routingContext) {
     Integer id = valueOf(routingContext.request().getParam("id"));
     JsonObject requestPayload = new JsonObject().put("id", id);
-    DeliveryOptions options = new DeliveryOptions().addHeader("action", "delete-page");
     LOGGER.info("going to delete page " + id);
 
-    vertx
-      .eventBus()
-      .request("wikidb.queue", requestPayload, options)
+    this.proxy.deletePage(requestPayload)
       .onSuccess(message -> {
         routingContext.redirect("/");
       })
@@ -80,15 +80,13 @@ public class HttpVerticle extends AbstractVerticle {
     boolean newPage = "yes".equals(routingContext.request().getParam("newPage"));
     String markdown = routingContext.request().getParam("markdown");
 
-    DeliveryOptions options = new DeliveryOptions().addHeader("action", "upsert-page");
     JsonObject requestPayload = new JsonObject()
       .put("id", id)
       .put("title", title)
       .put("newPage", newPage)
       .put("markDown", markdown);
 
-    vertx.eventBus()
-      .request("wikidb.queue", requestPayload, options)
+    this.proxy.upsertPage(requestPayload)
       .onSuccess(message -> {
         routingContext.response().setStatusCode(303);
         routingContext.response().putHeader("Location", "/wiki/" + title);
@@ -103,11 +101,8 @@ public class HttpVerticle extends AbstractVerticle {
   private void pageRenderingHandler(RoutingContext routingContext) {
     String pageName = routingContext.pathParam("page");
     JsonObject requestPayload = new JsonObject().put("page", pageName);
-    DeliveryOptions options = new DeliveryOptions().addHeader("action", "render-page");
-    vertx.eventBus()
-      .request("wikidb.queue", requestPayload, options)
-      .compose(response -> {
-        JsonObject templateData = (JsonObject) response.body();
+    this.proxy.renderPage(requestPayload).compose(response -> {
+        JsonObject templateData = response.copy();
         templateData.put("content", Processor.process(templateData.getString("rawContent")));
         return templateEngine.render(templateData, "templates/page.ftl");
       })
@@ -121,13 +116,11 @@ public class HttpVerticle extends AbstractVerticle {
   }
 
   private void indexHandler(RoutingContext routingContext) {
-    DeliveryOptions options = new DeliveryOptions().addHeader("action", "all-pages");
-    vertx.eventBus()
-      .request("wikidb.queue", new JsonObject(), options)
+    this.proxy
+      .fetchAllPages()
       .compose(message -> {
-        JsonObject response = (JsonObject) message.body();
         JsonObject templateData = new JsonObject().put("title", "Home of our Wiki!!!");
-        templateData.put("pages", response.getJsonArray("pages").getList());
+        templateData.put("pages", message.getJsonArray("pages").getList());
         LOGGER.info("the templatedata {}", templateData);
         return templateEngine.render(templateData, "templates/index.ftl");
       })
