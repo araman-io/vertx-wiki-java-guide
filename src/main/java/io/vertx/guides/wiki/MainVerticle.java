@@ -5,6 +5,7 @@ import io.vertx.core.DeploymentOptions;
 import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
 import io.vertx.guides.wiki.database.DbVerticle;
+import io.vertx.guides.wiki.http.HttpVerticle;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 

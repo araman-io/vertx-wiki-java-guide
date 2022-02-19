@@ -1,9 +1,11 @@
-package io.vertx.guides.wiki;
+package io.vertx.guides.wiki.http;
 
 import com.github.rjeschke.txtmark.Processor;
+import io.netty.handler.codec.http.HttpResponseStatus;
 import io.vertx.core.AbstractVerticle;
 import io.vertx.core.Promise;
 import io.vertx.core.http.HttpServer;
+import io.vertx.core.json.Json;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
@@ -43,6 +45,12 @@ public class HttpVerticle extends AbstractVerticle {
     router.post("/delete").handler(this::pageDeletionHandler);
     router.get("/backup").handler(this::backupHandler);
 
+    //api router
+    Router apiRouter = Router.router(vertx);
+    apiRouter.get("/pages").handler(this::fetchAllPages);
+    apiRouter.get("/page/:pageName").handler(this::fetchPage);
+    router.mountSubRouter("/api", apiRouter);
+
     httpServer.requestHandler(router)
       .listen(8080)
       .onSuccess(result -> {
@@ -51,6 +59,33 @@ public class HttpVerticle extends AbstractVerticle {
       }).onFailure(error -> {
         LOGGER.error("something went wrong {}", error);
         startPromise.fail(error);
+      });
+  }
+
+  private void fetchAllPages(RoutingContext routingContext) {
+    this.proxy.fetchAllPages()
+      .onSuccess(data -> {
+        routingContext.response()
+          .putHeader("Content-Type", "application/json")
+          .setStatusCode(HttpResponseStatus.OK.code())
+          .end(data.encode());
+      })
+      .onFailure(error -> {
+        routingContext.fail(error);
+      });
+  }
+
+  private void fetchPage(RoutingContext routingContext) {
+    String pageName = routingContext.request().getParam("pageName");
+    this.proxy.renderPage(new JsonObject().put("page", pageName))
+      .onSuccess(data -> {
+        routingContext.response()
+          .putHeader("Content-Type", "application/json")
+          .setStatusCode(HttpResponseStatus.OK.code())
+          .end(data.encode());
+      })
+      .onFailure(error -> {
+        routingContext.fail(error);
       });
   }
 
